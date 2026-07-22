@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+    function myOrgId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId;
+    }
+
+    match /users/{uid} {
+      // users may read their own profile; admins read all
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // admins manage users; a brand-new signed-in account may create ONLY its
+      // own profile (bootstrap admin + invitation acceptance)
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /orgs/{orgId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /models/{modelId} {
+      // admins see everything; users only models assigned to their org
+      allow read: if isAdmin() || (signedIn() && myOrgId() in resource.data.orgIds);
+      allow write: if isAdmin();
+    }
+
+    match /invitations/{inviteId} {
+      allow read, write: if isAdmin();
+    }
+
+    // (later phase) prediction/feedback logs
+    match /predictions/{predId} {
+      allow create: if signedIn();
+      allow read: if isAdmin();
+    }
+  }
+}

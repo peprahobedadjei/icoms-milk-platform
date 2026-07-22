@@ -1,0 +1,36 @@
+# ---- secrets: NEVER commit ----
+.env
+.env.local
+.env*.local
+*firebase-adminsdk*.json
+serviceAccount*.json
+service-account*.json
+*.key
+
+# ---- node / next (frontend) ----
+node_modules/
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+.vercel/
+
+# ---- python (backend / conversion) ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---- model artifacts (large; live in GitHub Releases / Drive, not git) ----
+_model_cache/
+*.onnx
+*.pth
+
+# ---- os / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
