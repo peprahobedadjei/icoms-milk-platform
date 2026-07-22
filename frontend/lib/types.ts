@@ -31,6 +31,7 @@ export interface ModelDoc {
 export interface InvitationDoc {
   id: string;
   email: string;
+  uid?: string;
   orgId: string;
   role: Role;
   status: "sent" | "accepted";

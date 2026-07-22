@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signOut,
 } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
@@ -15,14 +16,10 @@ const BOOTSTRAP_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_BOOTSTRAP_ADMIN_EMAIL ??
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-// Default admin credentials pre-filled for easy first login (dev convenience).
-const DEFAULT_ADMIN_EMAIL = process.env.NEXT_PUBLIC_DEFAULT_ADMIN_EMAIL ?? "";
-const DEFAULT_ADMIN_PASSWORD = process.env.NEXT_PUBLIC_DEFAULT_ADMIN_PASSWORD ?? "";
-
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState(DEFAULT_ADMIN_EMAIL);
-  const [password, setPassword] = useState(DEFAULT_ADMIN_PASSWORD);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -47,6 +44,15 @@ export default function LoginPage() {
       } catch {
         /* keep whatever role we have and route accordingly */
       }
+    }
+
+    // deactivated (non-admin) accounts cannot enter
+    const active = snap.exists() ? snap.data().active : true;
+    if (role !== "admin" && active === false) {
+      await signOut(auth);
+      setError("Your account has been deactivated. Please contact your administrator.");
+      setBusy(false);
+      return;
     }
 
     if (role === "admin") router.replace("/admin");

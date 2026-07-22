@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [state, setState] = useState<"loading" | "ok">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "disabled">("loading");
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
@@ -16,6 +17,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         router.replace("/login");
         return;
       }
+      // block deactivated accounts
+      try {
+        const snap = await getDoc(doc(db, "users", u.uid));
+        if (snap.exists() && snap.data().active === false) {
+          setState("disabled");
+          return;
+        }
+      } catch { /* if the check fails, fall through and allow */ }
       setUser(u);
       setState("ok");
     });
@@ -26,6 +35,22 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     return (
       <main style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
         <span className="spinner spinner-dark" />
+      </main>
+    );
+  }
+
+  if (state === "disabled") {
+    return (
+      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
+        <div className="card" style={{ maxWidth: 420, textAlign: "center" }}>
+          <h2 style={{ marginBottom: 10 }}>Account deactivated</h2>
+          <p className="muted" style={{ marginBottom: 18 }}>
+            Your access has been paused. Please contact your administrator.
+          </p>
+          <button className="btn" onClick={() => signOut(auth).then(() => router.replace("/login"))}>
+            Back to login
+          </button>
+        </div>
       </main>
     );
   }

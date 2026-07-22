@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  addDoc, collection, doc, getDocs, orderBy, query, serverTimestamp, setDoc,
+  addDoc, collection, doc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc,
 } from "firebase/firestore";
 import { auth, createAuthUserAsAdmin, db, generatePassword } from "@/lib/firebase";
 import type { InvitationDoc, OrgDoc, Role } from "@/lib/types";
@@ -24,19 +24,74 @@ export default function InvitationsPage() {
   const [orgId, setOrgId] = useState("");
   const [role, setRole] = useState<Role>("user");
 
+  // user records keyed by email (uid + active), for per-invite management
+  const [usersByEmail, setUsersByEmail] = useState<Record<string, { uid: string; active: boolean }>>({});
+  const [deleteTarget, setDeleteTarget] = useState<InvitationDoc | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   async function load() {
     setLoading(true);
     try {
-      const [oSnap, iSnap] = await Promise.all([
+      const [oSnap, iSnap, uSnap] = await Promise.all([
         getDocs(query(collection(db, "orgs"), orderBy("name"))),
         getDocs(query(collection(db, "invitations"), orderBy("sentAt", "desc"))),
+        getDocs(collection(db, "users")),
       ]);
       setOrgs(oSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<OrgDoc, "id">) })));
       setInvites(iSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<InvitationDoc, "id">) })));
+      const map: Record<string, { uid: string; active: boolean }> = {};
+      uSnap.docs.forEach((d) => {
+        const u = d.data() as { email?: string; active?: boolean };
+        if (u.email) map[u.email] = { uid: d.id, active: u.active !== false };
+      });
+      setUsersByEmail(map);
     } catch (e) {
       setError("Could not load data: " + (e as Error).message);
     }
     setLoading(false);
+  }
+
+  function userFor(inv: InvitationDoc) {
+    return usersByEmail[inv.email] ?? (inv.uid ? { uid: inv.uid, active: true } : null);
+  }
+
+  async function toggleActive(inv: InvitationDoc) {
+    const u = userFor(inv);
+    if (!u) { setError("No account found for " + inv.email); return; }
+    try {
+      await updateDoc(doc(db, "users", u.uid), { active: !u.active });
+      setUsersByEmail((m) => ({ ...m, [inv.email]: { uid: u.uid, active: !u.active } }));
+    } catch (e) {
+      setError("Could not update access: " + (e as Error).message);
+    }
+  }
+
+  async function confirmDelete() {
+    const inv = deleteTarget;
+    if (!inv) return;
+    setDeleting(true);
+    setError("");
+    try {
+      const u = userFor(inv);
+      const adminToken = await auth.currentUser?.getIdToken();
+      const res = await fetch(`${BACKEND_URL}/delete-invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idToken: adminToken,
+          uid: auth.currentUser?.uid,
+          targetUid: u?.uid ?? "",
+          invitationId: inv.id,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Delete failed (${res.status})`);
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setError("Delete failed: " + (e as Error).message);
+    }
+    setDeleting(false);
   }
 
   useEffect(() => { load(); }, []);
@@ -63,12 +118,14 @@ export default function InvitationsPage() {
         displayName: displayName.trim() || cleanEmail.split("@")[0],
         role,
         orgId: role === "user" ? orgId : null,
+        active: true,
         createdAt: serverTimestamp(),
       });
 
-      // 3. record the invitation
+      // 3. record the invitation (store uid for later management)
       await addDoc(collection(db, "invitations"), {
         email: cleanEmail,
+        uid,
         orgId: role === "user" ? orgId : "",
         role,
         status: "sent",
@@ -202,22 +259,75 @@ export default function InvitationsPage() {
           ) : (
             <table className="table">
               <thead>
-                <tr><th>Email</th><th>Role</th><th>Organisation</th><th>Status</th></tr>
+                <tr><th>Email</th><th>Role</th><th>Organisation</th><th>Access</th><th style={{ textAlign: "right" }}>Actions</th></tr>
               </thead>
               <tbody>
-                {invites.map((i) => (
-                  <tr key={i.id}>
-                    <td style={{ fontWeight: 600 }}>{i.email}</td>
-                    <td><span className="badge badge-neutral">{i.role}</span></td>
-                    <td className="muted">{orgs.find((o) => o.id === i.orgId)?.name ?? "—"}</td>
-                    <td><span className="badge badge-primary">{i.status}</span></td>
-                  </tr>
-                ))}
+                {invites.map((i) => {
+                  const u = userFor(i);
+                  const active = u ? u.active : true;
+                  return (
+                    <tr key={i.id}>
+                      <td style={{ fontWeight: 600 }}>{i.email}</td>
+                      <td><span className="badge badge-neutral">{i.role}</span></td>
+                      <td className="muted">{orgs.find((o) => o.id === i.orgId)?.name ?? "—"}</td>
+                      <td>
+                        <button
+                          onClick={() => toggleActive(i)}
+                          title={active ? "Click to deactivate" : "Click to activate"}
+                          className="badge"
+                          style={{
+                            cursor: "pointer", border: "none", padding: "5px 12px",
+                            background: active ? "var(--good-soft)" : "var(--surface-2)",
+                            color: active ? "var(--good)" : "var(--muted)",
+                          }}
+                        >
+                          {active ? "● Active" : "○ Inactive"}
+                        </button>
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => { setError(""); setDeleteTarget(i); }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
       </div>
+
+      {deleteTarget && (
+        <div
+          onClick={() => !deleting && setDeleteTarget(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 100, padding: 20,
+            background: "rgba(55, 6, 39, 0.35)", backdropFilter: "blur(2px)",
+            display: "grid", placeItems: "center",
+          }}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="card fade-in" style={{ maxWidth: 440, width: "100%", padding: 26 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, marginBottom: 16, background: "var(--poor-soft)", color: "var(--poor)", display: "grid", placeItems: "center", fontSize: 22 }}>🗑</div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Delete {deleteTarget.email}?</h3>
+            <p className="muted" style={{ fontSize: 14, lineHeight: 1.6 }}>
+              This permanently deletes their login account, profile, and invitation.
+              <strong style={{ color: "var(--text)" }}> This cannot be undone.</strong> To only
+              pause access instead, use the Active toggle.
+            </p>
+            {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 22 }}>
+              <button className="btn btn-subtle" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button className="btn" onClick={confirmDelete} disabled={deleting} style={{ background: "var(--poor)", minWidth: 120 }}>
+                {deleting ? <span className="spinner" /> : "Delete user"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

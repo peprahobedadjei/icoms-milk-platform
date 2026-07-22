@@ -71,6 +71,24 @@ GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
 GMAIL_FROM_NAME = os.environ.get("GMAIL_FROM_NAME", "ICOMS")
 
+# Firebase service account (JSON string) — enables admin user operations (delete).
+FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "")
+
+
+def _sa_access_token() -> str:
+    """Mint a Google OAuth token from the service account (blocking)."""
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request
+
+    if not FIREBASE_SERVICE_ACCOUNT:
+        raise HTTPException(500, "Server is not configured for user management (missing FIREBASE_SERVICE_ACCOUNT)")
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(FIREBASE_SERVICE_ACCOUNT),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+    creds.refresh(Request())
+    return creds.token
+
 app = FastAPI(title="Milk Powder Classification — Inference")
 
 app.add_middleware(
@@ -548,3 +566,47 @@ async def send_invite(payload: dict):
         raise HTTPException(502, f"Could not send the email: {e}")
 
     return {"status": "sent", "to": to_email}
+
+
+# ----------------------------------------------------------------- delete invite
+
+@app.post("/delete-invite")
+async def delete_invite(payload: dict):
+    """Permanently remove an invited user: Auth account + user doc + invitation doc."""
+    id_token = payload.get("idToken")
+    admin_uid = payload.get("uid")
+    target_uid = (payload.get("targetUid") or "").strip()
+    invitation_id = (payload.get("invitationId") or "").strip()
+
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        await _require_admin(id_token, admin_uid, client)
+
+        # 1. delete the Firebase Auth account (service-account privilege)
+        if target_uid:
+            token = await run_in_threadpool(_sa_access_token)
+            r = await client.post(
+                f"https://identitytoolkit.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/accounts:delete",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"localId": target_uid},
+            )
+            # 200 = deleted; ignore "not found" so the rest still cleans up
+            if r.status_code not in (200, 204) and "USER_NOT_FOUND" not in r.text:
+                raise HTTPException(502, f"Could not delete the auth account ({r.status_code})")
+
+        # 2. delete the Firestore user doc (admin token)
+        if target_uid:
+            await client.delete(
+                f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
+                f"/databases/(default)/documents/users/{target_uid}",
+                headers={"Authorization": f"Bearer {id_token}"},
+            )
+
+        # 3. delete the invitation record (admin token)
+        if invitation_id:
+            await client.delete(
+                f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
+                f"/databases/(default)/documents/invitations/{invitation_id}",
+                headers={"Authorization": f"Bearer {id_token}"},
+            )
+
+    return {"status": "deleted"}
