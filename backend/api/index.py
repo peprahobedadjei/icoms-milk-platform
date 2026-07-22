@@ -394,18 +394,35 @@ async def delete_model(payload: dict):
                     manifest = cur.json() if cur.status_code == 200 else []
                     new_manifest = [e for e in manifest if e.get("storage_file") != storage_file]
                     removed_from_manifest = len(new_manifest) != len(manifest)
-                    await client.delete(
+
+                    async def _upload_manifest(data: list) -> httpx.Response:
+                        return await client.post(
+                            f"https://uploads.github.com/repos/{GITHUB_REPO}/releases/{release_id}/assets",
+                            headers={**headers, "Content-Type": "application/json"},
+                            params={"name": "manifest.json"},
+                            content=json.dumps(data, indent=2).encode(),
+                        )
+
+                    # GitHub can't overwrite an asset in place, so delete then re-upload.
+                    dm = await client.delete(
                         f"https://api.github.com/repos/{GITHUB_REPO}/releases/assets/{manifest_asset['id']}",
                         headers=headers,
                     )
-                    up = await client.post(
-                        f"https://uploads.github.com/repos/{GITHUB_REPO}/releases/{release_id}/assets",
-                        headers={**headers, "Content-Type": "application/json"},
-                        params={"name": "manifest.json"},
-                        content=json.dumps(new_manifest, indent=2).encode(),
-                    )
+                    if dm.status_code not in (200, 204):
+                        raise HTTPException(
+                            502,
+                            f"Could not update the manifest ({dm.status_code}). "
+                            "The GitHub token likely needs 'Contents: Read and write'.",
+                        )
+                    up = await _upload_manifest(new_manifest)
                     if up.status_code not in (201, 200):
-                        raise HTTPException(502, f"Could not update the manifest ({up.status_code})")
+                        # restore the original so the manifest is never left missing
+                        await _upload_manifest(manifest)
+                        raise HTTPException(
+                            502,
+                            f"Could not update the manifest ({up.status_code}). "
+                            "The GitHub token likely needs 'Contents: Read and write'.",
+                        )
 
                 # 2. delete the .onnx asset
                 if onnx_asset:
