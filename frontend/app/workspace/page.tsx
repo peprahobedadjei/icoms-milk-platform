@@ -174,14 +174,14 @@ export default function Workspace() {
               <div className="muted small" style={{ marginTop: 6 }}>{fileName}</div>
             </div>
             <div style={{ flex: "1 1 260px" }}>
-              <span className="label">Explanation (Grad-CAM)</span>
+              <span className="label">Grad-CAM</span>
               <img
                 src={`data:image/png;base64,${result.gradcam_png}`}
                 alt="grad-cam"
                 style={{ width: "100%", borderRadius: 10, marginTop: 6 }}
               />
               <div className="muted small" style={{ marginTop: 6 }}>
-                Warmer areas most influenced the decision
+                {fileName} — Grad-CAM
               </div>
             </div>
             <div style={{ flex: "1 1 220px" }}>
