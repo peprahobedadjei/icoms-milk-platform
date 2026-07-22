@@ -390,8 +390,14 @@ async def delete_model(payload: dict):
 
                 # 1. rewrite the manifest without this model's checksum
                 if manifest_asset:
-                    cur = await client.get(manifest_asset["browser_download_url"])
-                    manifest = cur.json() if cur.status_code == 200 else []
+                    cur = await client.get(
+                        manifest_asset["browser_download_url"], follow_redirects=True
+                    )
+                    if cur.status_code != 200:
+                        raise HTTPException(
+                            502, f"Could not read the current manifest ({cur.status_code})"
+                        )
+                    manifest = cur.json()
                     new_manifest = [e for e in manifest if e.get("storage_file") != storage_file]
                     removed_from_manifest = len(new_manifest) != len(manifest)
 
