@@ -280,3 +280,58 @@ async def trigger_conversion(payload: dict):
         "message": "Conversion started. Models appear here once the run finishes (a few minutes).",
         "actions_url": f"https://github.com/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}",
     }
+
+
+_GH_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
+
+
+@app.post("/conversion-status")
+async def conversion_status(payload: dict):
+    """Return the latest conversion run's steps + status, for live progress."""
+    id_token = payload.get("idToken")
+    uid = payload.get("uid")
+    if not GITHUB_TOKEN:
+        raise HTTPException(500, "Server is not configured (missing GITHUB_TOKEN)")
+
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", **_GH_HEADERS}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        await _require_admin(id_token, uid, client)
+
+        runs = await client.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}/runs",
+            headers=headers,
+            params={"per_page": 1},
+        )
+        if runs.status_code != 200:
+            raise HTTPException(502, f"Could not read runs ({runs.status_code})")
+        run_list = runs.json().get("workflow_runs", [])
+        if not run_list:
+            return {"found": False}
+        run = run_list[0]
+
+        jobs = await client.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/actions/runs/{run['id']}/jobs",
+            headers=headers,
+        )
+        steps = []
+        if jobs.status_code == 200:
+            for job in jobs.json().get("jobs", []):
+                for s in job.get("steps", []):
+                    steps.append({
+                        "name": s.get("name"),
+                        "status": s.get("status"),        # queued | in_progress | completed
+                        "conclusion": s.get("conclusion"),  # success | failure | skipped | null
+                    })
+
+        return {
+            "found": True,
+            "run_id": run["id"],
+            "status": run["status"],
+            "conclusion": run.get("conclusion"),
+            "html_url": run["html_url"],
+            "created_at": run.get("created_at"),
+            "steps": steps,
+        }

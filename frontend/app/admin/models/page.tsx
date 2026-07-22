@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc,
 } from "firebase/firestore";
@@ -9,6 +9,32 @@ import type { ModelDoc, OrgDoc } from "@/lib/types";
 
 const emptyForm = { displayName: "", description: "", storageFile: "", downloadUrl: "" };
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+
+function StepRow({ step }: { step: { name: string; status: string; conclusion: string | null } }) {
+  let icon: React.ReactNode;
+  let color = "var(--muted)";
+  if (step.status === "completed" && step.conclusion === "success") {
+    icon = "✓"; color = "var(--good)";
+  } else if (step.status === "completed" && step.conclusion === "failure") {
+    icon = "✗"; color = "var(--poor)";
+  } else if (step.status === "completed" && step.conclusion === "skipped") {
+    icon = "–"; color = "var(--muted)";
+  } else if (step.status === "in_progress") {
+    icon = <span className="spinner spinner-dark" style={{ width: 13, height: 13 }} />;
+    color = "var(--text)";
+  } else {
+    icon = "○"; color = "var(--muted)";
+  }
+  const running = step.status === "in_progress";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "7px 0", fontSize: 14 }}>
+      <span style={{ width: 18, textAlign: "center", color, display: "inline-flex", justifyContent: "center" }}>{icon}</span>
+      <span style={{ color: color === "var(--muted)" ? "var(--muted)" : "var(--text)", fontWeight: running ? 600 : 400 }}>
+        {step.name}
+      </span>
+    </div>
+  );
+}
 
 export default function ModelsPage() {
   const [models, setModels] = useState<ModelDoc[]>([]);
@@ -26,6 +52,49 @@ export default function ModelsPage() {
   const [force, setForce] = useState(false);
   const [converting, setConverting] = useState(false);
   const [convertMsg, setConvertMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+
+  // Live run progress
+  interface Step { name: string; status: string; conclusion: string | null }
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [runInfo, setRunInfo] = useState<{ status: string; conclusion: string | null; html_url: string } | null>(null);
+  const [tracking, setTracking] = useState(false);
+  const sawRunningRef = useRef(false);
+
+  useEffect(() => {
+    if (!tracking) return;
+    let cancelled = false;
+
+    async function tick() {
+      const user = auth.currentUser;
+      if (!user) return;
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(`${BACKEND_URL}/conversion-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, uid: user.uid }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !data.found) return;
+
+        // Ignore a previously-completed run until the fresh one starts.
+        if (data.status !== "completed") sawRunningRef.current = true;
+        if (data.status === "completed" && !sawRunningRef.current) return;
+
+        setSteps(data.steps || []);
+        setRunInfo({ status: data.status, conclusion: data.conclusion, html_url: data.html_url });
+        if (data.status === "completed") {
+          setTracking(false);
+          if (data.conclusion === "success") load();
+        }
+      } catch { /* transient poll error — keep going */ }
+    }
+
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [tracking]);
 
   async function triggerConversion(e: React.FormEvent) {
     e.preventDefault();
@@ -61,6 +130,11 @@ export default function ModelsPage() {
         url: data.actions_url,
       });
       setDriveLink("");
+      // begin live progress tracking
+      sawRunningRef.current = false;
+      setSteps([]);
+      setRunInfo(null);
+      setTracking(true);
     } catch (err) {
       setConvertMsg({ ok: false, text: (err as Error).message });
     }
@@ -191,6 +265,40 @@ export default function ModelsPage() {
           </p>
         )}
       </form>
+
+      {(tracking || steps.length > 0) && (
+        <div className="card fade-in" style={{ marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15 }}>
+              {!runInfo || runInfo.status !== "completed" ? (
+                <><span className="spinner spinner-dark" style={{ marginRight: 10, verticalAlign: -2 }} />Conversion in progress…</>
+              ) : runInfo.conclusion === "success" ? (
+                <span style={{ color: "var(--good)" }}>✓ Conversion complete</span>
+              ) : (
+                <span style={{ color: "var(--poor)" }}>✗ Conversion failed</span>
+              )}
+            </h3>
+            {runInfo?.html_url && (
+              <a href={runInfo.html_url} target="_blank" rel="noreferrer" className="small" style={{ color: "var(--primary)", fontWeight: 600 }}>
+                Open in GitHub →
+              </a>
+            )}
+          </div>
+
+          {steps.length === 0 ? (
+            <p className="muted small">Waiting for the runner to start…</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {steps.map((s, i) => <StepRow key={i} step={s} />)}
+            </div>
+          )}
+          {runInfo?.conclusion === "success" && (
+            <p className="success-text small" style={{ marginTop: 12 }}>
+              New models have been added below.
+            </p>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <button className="btn btn-subtle btn-sm" onClick={() => setShowAdd((v) => !v)}>
