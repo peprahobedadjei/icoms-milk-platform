@@ -46,6 +46,8 @@ export default function ModelsPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [edit, setEdit] = useState({ displayName: "", description: "" });
+  const [deleteTarget, setDeleteTarget] = useState<ModelDoc | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Convert-from-Drive panel
   const [driveLink, setDriveLink] = useState("");
@@ -209,13 +211,10 @@ export default function ModelsPage() {
     }
   }
 
-  async function removeModel(m: ModelDoc) {
-    const hasFile = Boolean(m.storageFile);
-    const msg = hasFile
-      ? `Delete "${m.displayName}"?\n\nThis permanently removes the model file from storage and its checksum, and cannot be undone.`
-      : `Remove "${m.displayName}" from the platform?`;
-    if (!confirm(msg)) return;
-    setBusy(true);
+  async function confirmDelete() {
+    const m = deleteTarget;
+    if (!m) return;
+    setDeleting(true);
     setError("");
     try {
       const user = auth.currentUser;
@@ -233,11 +232,12 @@ export default function ModelsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Delete failed (${res.status})`);
+      setDeleteTarget(null);
       await load();
     } catch (e) {
       setError("Delete failed: " + (e as Error).message);
     }
-    setBusy(false);
+    setDeleting(false);
   }
 
   return (
@@ -417,7 +417,7 @@ export default function ModelsPage() {
                       onClick={() => { setEditingId(m.id); setEdit({ displayName: m.displayName, description: m.description ?? "" }); }}>
                       Edit
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => removeModel(m)}>Remove</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setError(""); setDeleteTarget(m); }}>Remove</button>
                   </div>
                 )}
               </div>
@@ -452,6 +452,68 @@ export default function ModelsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div
+          onClick={() => !deleting && setDeleteTarget(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 100,
+            background: "rgba(55, 6, 39, 0.35)",
+            display: "grid", placeItems: "center", padding: 20,
+            backdropFilter: "blur(2px)",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="card fade-in"
+            style={{ maxWidth: 440, width: "100%", padding: 26 }}
+          >
+            <div
+              style={{
+                width: 44, height: 44, borderRadius: 12, marginBottom: 16,
+                background: "var(--poor-soft)", color: "var(--poor)",
+                display: "grid", placeItems: "center", fontSize: 22,
+              }}
+            >
+              🗑
+            </div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+              Delete “{deleteTarget.displayName}”?
+            </h3>
+            <p className="muted" style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 4 }}>
+              {deleteTarget.storageFile ? (
+                <>
+                  This permanently removes the model file from storage and its
+                  checksum from the manifest, and deletes it from the platform.
+                  <strong style={{ color: "var(--text)" }}> This cannot be undone.</strong>
+                </>
+              ) : (
+                <>This removes the model from the platform. This cannot be undone.</>
+              )}
+            </p>
+
+            {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 22 }}>
+              <button
+                className="btn btn-subtle"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={confirmDelete}
+                disabled={deleting}
+                style={{ background: "var(--poor)", minWidth: 120 }}
+              >
+                {deleting ? <span className="spinner" /> : "Delete model"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
