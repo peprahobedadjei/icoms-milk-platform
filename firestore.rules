@@ -16,9 +16,9 @@ service cloud.firestore {
     match /users/{uid} {
       // users may read their own profile; admins read all
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      // admins manage users; a brand-new signed-in account may create ONLY its
-      // own profile (bootstrap admin + invitation acceptance)
-      allow create: if signedIn() && request.auth.uid == uid;
+      // an admin may create any user's profile (invitations); a brand-new signed-in
+      // account may create ONLY its own profile (bootstrap admin / self-heal)
+      allow create: if signedIn() && (isAdmin() || request.auth.uid == uid);
       allow update, delete: if isAdmin();
     }
 
