@@ -117,6 +117,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </nav>
 
         <div style={{ marginTop: "auto", padding: "0 10px" }}>
+          <Link
+            href="/workspace"
+            style={{
+              display: "block", textAlign: "center", marginBottom: 12,
+              padding: "9px 12px", borderRadius: 10, fontSize: 13.5, fontWeight: 600,
+              color: "var(--primary)", border: "1.5px solid var(--primary)",
+            }}
+          >
+            ↗ Open tester workspace
+          </Link>
           <div className="muted small" style={{ marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis" }}>
             {user?.email}
           </div>

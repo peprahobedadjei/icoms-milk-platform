@@ -15,6 +15,7 @@ Endpoints:
 import base64
 import hashlib
 import io
+import json
 import os
 import time
 from pathlib import Path
@@ -335,3 +336,90 @@ async def conversion_status(payload: dict):
             "created_at": run.get("created_at"),
             "steps": steps,
         }
+
+
+# ----------------------------------------------------------------- delete model
+
+async def _firestore_delete(doc_id: str, id_token: str, client: httpx.AsyncClient) -> None:
+    url = (
+        f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
+        f"/databases/(default)/documents/models/{doc_id}"
+    )
+    r = await client.delete(url, headers={"Authorization": f"Bearer {id_token}"})
+    if r.status_code not in (200, 204):
+        raise HTTPException(502, f"Could not delete the model record ({r.status_code})")
+
+
+@app.post("/delete-model")
+async def delete_model(payload: dict):
+    """Fully remove a model: Release asset + manifest checksum + Firestore doc.
+
+    Models registered manually (no storage_file) are removed from Firestore only.
+    """
+    id_token = payload.get("idToken")
+    uid = payload.get("uid")
+    doc_id = (payload.get("docId") or "").strip()
+    storage_file = (payload.get("storageFile") or "").strip()
+    if not doc_id:
+        raise HTTPException(400, "docId is required")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await _require_admin(id_token, uid, client)
+
+        removed_asset = False
+        removed_from_manifest = False
+
+        if storage_file:
+            if not GITHUB_TOKEN:
+                raise HTTPException(
+                    500,
+                    "Server is not configured to delete model files (missing GITHUB_TOKEN).",
+                )
+            headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", **_GH_HEADERS}
+
+            rel = await client.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/models",
+                headers=headers,
+            )
+            if rel.status_code == 200:
+                release = rel.json()
+                release_id = release["id"]
+                assets = release.get("assets", [])
+                onnx_asset = next((a for a in assets if a["name"] == storage_file), None)
+                manifest_asset = next((a for a in assets if a["name"] == "manifest.json"), None)
+
+                # 1. rewrite the manifest without this model's checksum
+                if manifest_asset:
+                    cur = await client.get(manifest_asset["browser_download_url"])
+                    manifest = cur.json() if cur.status_code == 200 else []
+                    new_manifest = [e for e in manifest if e.get("storage_file") != storage_file]
+                    removed_from_manifest = len(new_manifest) != len(manifest)
+                    await client.delete(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/releases/assets/{manifest_asset['id']}",
+                        headers=headers,
+                    )
+                    up = await client.post(
+                        f"https://uploads.github.com/repos/{GITHUB_REPO}/releases/{release_id}/assets",
+                        headers={**headers, "Content-Type": "application/json"},
+                        params={"name": "manifest.json"},
+                        content=json.dumps(new_manifest, indent=2).encode(),
+                    )
+                    if up.status_code not in (201, 200):
+                        raise HTTPException(502, f"Could not update the manifest ({up.status_code})")
+
+                # 2. delete the .onnx asset
+                if onnx_asset:
+                    d = await client.delete(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/releases/assets/{onnx_asset['id']}",
+                        headers=headers,
+                    )
+                    removed_asset = d.status_code in (204, 200)
+
+        # 3. delete the Firestore record (with the admin's own token)
+        await _firestore_delete(doc_id, id_token, client)
+
+    return {
+        "status": "deleted",
+        "asset_deleted": removed_asset,
+        "manifest_updated": removed_from_manifest,
+    }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc,
+  addDoc, collection, doc, getDocs, orderBy, query, serverTimestamp, updateDoc,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import type { ModelDoc, OrgDoc } from "@/lib/types";
@@ -210,10 +210,29 @@ export default function ModelsPage() {
   }
 
   async function removeModel(m: ModelDoc) {
-    if (!confirm(`Remove model "${m.displayName}" from the platform? (The ONNX file itself is not deleted.)`)) return;
+    const hasFile = Boolean(m.storageFile);
+    const msg = hasFile
+      ? `Delete "${m.displayName}"?\n\nThis permanently removes the model file from storage and its checksum, and cannot be undone.`
+      : `Remove "${m.displayName}" from the platform?`;
+    if (!confirm(msg)) return;
     setBusy(true);
+    setError("");
     try {
-      await deleteDoc(doc(db, "models", m.id));
+      const user = auth.currentUser;
+      if (!user) throw new Error("Your session expired — please sign in again.");
+      const idToken = await user.getIdToken();
+      const res = await fetch(`${BACKEND_URL}/delete-model`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idToken,
+          uid: user.uid,
+          docId: m.id,
+          storageFile: m.storageFile ?? "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Delete failed (${res.status})`);
       await load();
     } catch (e) {
       setError("Delete failed: " + (e as Error).message);
