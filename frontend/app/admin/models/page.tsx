@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import {
   addDoc, collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import type { ModelDoc, OrgDoc } from "@/lib/types";
 
 const emptyForm = { displayName: "", description: "", storageFile: "", downloadUrl: "" };
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
 
 export default function ModelsPage() {
   const [models, setModels] = useState<ModelDoc[]>([]);
@@ -19,6 +20,52 @@ export default function ModelsPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [edit, setEdit] = useState({ displayName: "", description: "" });
+
+  // Convert-from-Drive panel
+  const [driveLink, setDriveLink] = useState("");
+  const [force, setForce] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [convertMsg, setConvertMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+
+  async function triggerConversion(e: React.FormEvent) {
+    e.preventDefault();
+    setConvertMsg(null);
+    if (!driveLink.trim()) return;
+    if (!BACKEND_URL) {
+      setConvertMsg({ ok: false, text: "Backend URL is not configured." });
+      return;
+    }
+    const user = auth.currentUser;
+    if (!user) {
+      setConvertMsg({ ok: false, text: "Your session expired — please sign in again." });
+      return;
+    }
+    setConverting(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch(`${BACKEND_URL}/trigger-conversion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idToken,
+          uid: user.uid,
+          drive_link: driveLink.trim(),
+          force,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+      setConvertMsg({
+        ok: true,
+        text: data.message || "Conversion started.",
+        url: data.actions_url,
+      });
+      setDriveLink("");
+    } catch (err) {
+      setConvertMsg({ ok: false, text: (err as Error).message });
+    }
+    setConverting(false);
+  }
 
   async function load() {
     setLoading(true);
@@ -102,15 +149,52 @@ export default function ModelsPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 26 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>Models</h1>
-          <p className="muted" style={{ marginTop: 6 }}>
-            Rename models, describe them, and choose which organisations can use each one.
-          </p>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>Models</h1>
+        <p className="muted" style={{ marginTop: 6 }}>
+          Convert models from Google Drive, then rename them and choose which
+          organisations can use each one.
+        </p>
+      </div>
+
+      <form onSubmit={triggerConversion} className="card" style={{ marginBottom: 22 }}>
+        <h3 style={{ fontSize: 15, marginBottom: 6 }}>Convert from Google Drive</h3>
+        <p className="muted small" style={{ marginBottom: 16 }}>
+          Paste a link to a Drive <strong>folder</strong> (or a single <code>.pth</code> file)
+          shared as “Anyone with the link”. Each new checkpoint is converted to fp16 ONNX,
+          fidelity-checked, and published automatically. Already-converted files are skipped.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            className="input"
+            style={{ flex: "1 1 340px" }}
+            placeholder="https://drive.google.com/drive/folders/…"
+            value={driveLink}
+            onChange={(e) => setDriveLink(e.target.value)}
+          />
+          <label className="small" style={{ display: "flex", alignItems: "center", gap: 7, color: "var(--muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            Force reconvert all
+          </label>
+          <button className="btn" disabled={converting || !driveLink.trim()}>
+            {converting ? <span className="spinner" /> : "Start conversion"}
+          </button>
         </div>
-        <button className="btn" onClick={() => setShowAdd((v) => !v)}>
-          {showAdd ? "Close" : "+ Add model"}
+        {convertMsg && (
+          <p className={convertMsg.ok ? "success-text" : "error-text"} style={{ marginTop: 14 }}>
+            {convertMsg.ok ? "✓ " : "✗ "}{convertMsg.text}{" "}
+            {convertMsg.url && (
+              <a href={convertMsg.url} target="_blank" rel="noreferrer" style={{ color: "var(--primary)", fontWeight: 600 }}>
+                View progress →
+              </a>
+            )}
+          </p>
+        )}
+      </form>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+        <button className="btn btn-subtle btn-sm" onClick={() => setShowAdd((v) => !v)}>
+          {showAdd ? "Close" : "Add manually instead"}
         </button>
       </div>
 

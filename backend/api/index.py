@@ -55,6 +55,12 @@ ALLOWED_MODEL_HOSTS = {
     "raw.githubusercontent.com",
 }
 
+# Conversion-trigger config (set as backend env vars on Vercel).
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "peprahobedadjei/icoms-milk-platform")
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "icoms-v2")
+WORKFLOW_FILE = os.environ.get("CONVERT_WORKFLOW", "convert-models.yml")
+
 app = FastAPI(title="Milk Powder Classification — Inference")
 
 app.add_middleware(
@@ -218,3 +224,59 @@ async def predict(
         "preview_png": _png_b64(np.uint8(255 * disp)),
         "gradcam_png": cam_overlay_png(cams[0, pred], disp),
     })
+
+
+# ----------------------------------------------------------------- convert trigger
+
+async def _require_admin(id_token: str, uid: str, client: httpx.AsyncClient) -> None:
+    """Verify the caller is an admin by reading their own user doc with their
+    Firebase ID token (Firestore validates the token and enforces the read rule).
+    """
+    if not id_token or not uid:
+        raise HTTPException(401, "Missing credentials")
+    url = (
+        f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
+        f"/databases/(default)/documents/users/{uid}"
+    )
+    r = await client.get(url, headers={"Authorization": f"Bearer {id_token}"})
+    if r.status_code == 401:
+        raise HTTPException(401, "Invalid or expired session")
+    if r.status_code != 200:
+        raise HTTPException(403, "Could not verify your account")
+    role = r.json().get("fields", {}).get("role", {}).get("stringValue")
+    if role != "admin":
+        raise HTTPException(403, "Admin privileges required")
+
+
+@app.post("/trigger-conversion")
+async def trigger_conversion(payload: dict):
+    id_token = payload.get("idToken")
+    uid = payload.get("uid")
+    drive_link = (payload.get("drive_link") or "").strip()
+    force = bool(payload.get("force", False))
+
+    if not drive_link:
+        raise HTTPException(400, "A Google Drive link is required")
+    if not GITHUB_TOKEN:
+        raise HTTPException(500, "Server is not configured to trigger conversions (missing GITHUB_TOKEN)")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        await _require_admin(id_token, uid, client)
+
+        gh = await client.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}/dispatches",
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"ref": "main", "inputs": {"drive_link": drive_link, "force": force}},
+        )
+        if gh.status_code not in (201, 204):
+            raise HTTPException(502, f"GitHub trigger failed ({gh.status_code}): {gh.text[:200]}")
+
+    return {
+        "status": "triggered",
+        "message": "Conversion started. Models appear here once the run finishes (a few minutes).",
+        "actions_url": f"https://github.com/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}",
+    }
