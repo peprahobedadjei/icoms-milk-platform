@@ -10,8 +10,11 @@ pip install -r requirements.txt
 # point it at local ONNX models (from the onnx_pytorch converter) for dev:
 $env:LOCAL_MODELS_DIR = "C:\Users\ObedPeprah-RESEARCH\OneDrive - Atlantic TU\Desktop\Repos\ResearchAssistant\onnx_pytorch\converted_models"
 
-uvicorn app:app --host 127.0.0.1 --port 8020 --reload
+uvicorn api.index:app --host 127.0.0.1 --port 8020 --reload
 ```
+
+On Vercel this same file (`api/index.py`) is deployed as the serverless function;
+`vercel.json` routes all paths to it. Root Directory in the Vercel project = `backend`.
 
 - `GET  http://127.0.0.1:8020/health`
 - `POST http://127.0.0.1:8020/predict` — multipart form:
