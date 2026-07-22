@@ -461,104 +461,51 @@ async def delete_model(payload: dict):
 
 def _invite_email_html(name: str, email: str, password: str, org: str,
                        role: str, login_url: str) -> str:
-    role_label = "Administrator" if role == "admin" else "Tester"
-    org_row = (
-        f'<tr><td style="padding:4px 0;color:#8a6b7d;">Organisation</td>'
-        f'<td style="padding:4px 0;font-weight:600;text-align:right;">{org}</td></tr>'
-        if org else ""
-    )
+    org_part = f" for {org}" if org else ""
     return f"""\
 <!doctype html>
-<html><body style="margin:0;background:#faf7f8;font-family:'Segoe UI',Arial,sans-serif;color:#370627;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf7f8;padding:28px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="560" cellpadding="0" cellspacing="0"
-             style="max-width:560px;width:100%;background:#ffffff;border:1px solid #f0e4e9;border-radius:16px;overflow:hidden;">
-        <tr><td style="background:#cd0e34;padding:22px 32px;">
-          <span style="color:#fff;font-size:20px;font-weight:800;letter-spacing:.5px;">ICOMS</span>
-          <div style="color:#ffd9e1;font-size:13px;margin-top:2px;">Powder Milk Quality Assessment</div>
-        </td></tr>
-
-        <tr><td style="padding:30px 32px 8px;">
-          <h1 style="margin:0 0 6px;font-size:21px;">Hi {name},</h1>
-          <p style="margin:0;color:#6b5563;font-size:15px;line-height:1.6;">
-            You've been invited to the ICOMS platform as a <strong>{role_label}</strong>.
-            Use the credentials below to sign in.
-          </p>
-        </td></tr>
-
-        <tr><td style="padding:18px 32px 6px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-                 style="background:#faf7f8;border:1px solid #f0e4e9;border-radius:12px;padding:16px 18px;">
-            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Name</td>
-                <td style="padding:4px 0;font-weight:600;text-align:right;font-size:14px;">{name}</td></tr>
-            {org_row}
-            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Role</td>
-                <td style="padding:4px 0;font-weight:600;text-align:right;font-size:14px;">{role_label}</td></tr>
-            <tr><td style="padding:10px 0 4px;color:#8a6b7d;font-size:14px;">Email</td>
-                <td style="padding:10px 0 4px;font-weight:600;text-align:right;font-size:14px;">{email}</td></tr>
-            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Password</td>
-                <td style="padding:4px 0;text-align:right;">
-                  <code style="background:#fdeef1;color:#cd0e34;font-weight:700;padding:4px 10px;border-radius:6px;font-size:14px;">{password}</code>
-                </td></tr>
-          </table>
-        </td></tr>
-
-        <tr><td align="center" style="padding:22px 32px 6px;">
-          <a href="{login_url}" style="display:inline-block;background:#cd0e34;color:#fff;text-decoration:none;
-             font-weight:700;font-size:15px;padding:13px 34px;border-radius:10px;">Open ICOMS &amp; sign in</a>
-          <div style="margin-top:10px;font-size:12px;color:#8a6b7d;">or paste this link: {login_url}</div>
-        </td></tr>
-
-        <tr><td style="padding:22px 32px 6px;">
-          <h2 style="margin:0 0 10px;font-size:16px;">How to run an assessment</h2>
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
-              <strong style="color:#cd0e34;">1.</strong>&nbsp; Sign in with the credentials above.</td></tr>
-            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
-              <strong style="color:#cd0e34;">2.</strong>&nbsp; Choose a model from the list.</td></tr>
-            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
-              <strong style="color:#cd0e34;">3.</strong>&nbsp; Upload a microscopy image (<code>.tif</code>, <code>.jpg</code> or <code>.png</code>).</td></tr>
-            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
-              <strong style="color:#cd0e34;">4.</strong>&nbsp; Read the result — a <strong>good / poor</strong> assessment with confidence,
-              plus a Grad-CAM heat-map showing which regions the model focused on.</td></tr>
-          </table>
-        </td></tr>
-
-        <tr><td style="padding:20px 32px 30px;border-top:1px solid #f0e4e9;margin-top:10px;">
-          <p style="margin:0;font-size:12.5px;color:#8a6b7d;line-height:1.6;">
-            Keep these credentials private. If you didn't expect this invitation, you can ignore this email.
-            Need help? Reply to this message and your administrator will assist.
-          </p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+<html><body style="margin:0;padding:0;background:#ffffff;">
+  <div style="max-width:520px;margin:0 auto;padding:24px 20px;font-family:Arial,Helvetica,sans-serif;
+              font-size:15px;line-height:1.6;color:#222222;">
+    <p style="margin:0 0 14px;">Hi {name},</p>
+    <p style="margin:0 0 14px;">
+      You've been set up on ICOMS, our powder-milk quality tool{org_part}. Here's how to get started.
+    </p>
+    <p style="margin:0 0 14px;">
+      Open the tool:<br>
+      <a href="{login_url}" style="color:#1155cc;">{login_url}</a>
+    </p>
+    <p style="margin:0 0 14px;">
+      Sign in with:<br>
+      Email: {email}<br>
+      Temporary password: {password}
+    </p>
+    <p style="margin:0 0 14px;">
+      Once you're in, pick a model, upload a microscopy image (.tif, .jpg or .png),
+      and you'll get a good / poor result with a heat-map showing which areas the model looked at.
+    </p>
+    <p style="margin:0 0 14px;">If you have any questions, just reply to this email.</p>
+    <p style="margin:0;">Thanks,<br>{GMAIL_FROM_NAME}</p>
+  </div>
 </body></html>"""
 
 
 def _invite_email_text(name: str, email: str, password: str, org: str,
                        role: str, login_url: str) -> str:
-    role_label = "Administrator" if role == "admin" else "Tester"
-    org_line = f"Organisation: {org}\n" if org else ""
+    org_part = f" for {org}" if org else ""
     return (
         f"Hi {name},\n\n"
-        f"You've been invited to the ICOMS Powder Milk Quality Assessment platform "
-        f"as a {role_label}.\n\n"
-        f"Sign in here: {login_url}\n\n"
-        f"Your credentials\n"
-        f"----------------\n"
-        f"Name: {name}\n"
-        f"{org_line}"
-        f"Role: {role_label}\n"
+        f"You've been set up on ICOMS, our powder-milk quality tool{org_part}. "
+        f"Here's how to get started.\n\n"
+        f"Open the tool:\n{login_url}\n\n"
+        f"Sign in with:\n"
         f"Email: {email}\n"
-        f"Password: {password}\n\n"
-        f"How to run an assessment\n"
-        f"1. Sign in with the credentials above.\n"
-        f"2. Choose a model from the list.\n"
-        f"3. Upload a microscopy image (.tif, .jpg or .png).\n"
-        f"4. Read the good/poor result with confidence and a Grad-CAM heat-map.\n\n"
-        f"Keep these credentials private.\n"
+        f"Temporary password: {password}\n\n"
+        f"Once you're in, pick a model, upload a microscopy image (.tif, .jpg or .png), "
+        f"and you'll get a good / poor result with a heat-map showing which areas the "
+        f"model looked at.\n\n"
+        f"If you have any questions, just reply to this email.\n\n"
+        f"Thanks,\n{GMAIL_FROM_NAME}\n"
     )
 
 
@@ -582,8 +529,9 @@ async def send_invite(payload: dict):
         await _require_admin(id_token, uid, client)
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Your ICOMS access — Powder Milk Quality Assessment"
+    msg["Subject"] = "Getting started with ICOMS"
     msg["From"] = f"{GMAIL_FROM_NAME} <{GMAIL_USER}>"
+    msg["Reply-To"] = GMAIL_USER
     msg["To"] = to_email
     msg.attach(MIMEText(_invite_email_text(to_name, to_email, password, org_name, role, login_url), "plain"))
     msg.attach(MIMEText(_invite_email_html(to_name, to_email, password, org_name, role, login_url), "html"))
