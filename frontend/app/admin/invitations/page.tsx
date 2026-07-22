@@ -1,17 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import emailjs from "@emailjs/browser";
 import {
   addDoc, collection, doc, getDocs, orderBy, query, serverTimestamp, setDoc,
 } from "firebase/firestore";
-import { createAuthUserAsAdmin, db, generatePassword } from "@/lib/firebase";
+import { auth, createAuthUserAsAdmin, db, generatePassword } from "@/lib/firebase";
 import type { InvitationDoc, OrgDoc, Role } from "@/lib/types";
 
-const EMAILJS_SERVICE = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID ?? "";
-const EMAILJS_TEMPLATE = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID ?? "";
-const EMAILJS_KEY = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY ?? "";
-const emailConfigured = Boolean(EMAILJS_SERVICE && EMAILJS_TEMPLATE && EMAILJS_KEY);
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
 
 interface CreatedCreds { email: string; password: string; emailed: boolean; }
 
@@ -79,27 +75,27 @@ export default function InvitationsPage() {
         sentAt: serverTimestamp(),
       });
 
-      // 4. send credentials by email (EmailJS) or fall back to showing them
+      // 4. send credentials by email via the backend (Gmail SMTP)
       let emailed = false;
-      if (emailConfigured) {
-        try {
-          await emailjs.send(
-            EMAILJS_SERVICE,
-            EMAILJS_TEMPLATE,
-            {
-              to_email: cleanEmail,
-              to_name: displayName.trim() || cleanEmail,
-              login_email: cleanEmail,
-              login_password: password,
-              login_url: window.location.origin + "/login",
-              org_name: orgs.find((o) => o.id === orgId)?.name ?? "",
-            },
-            { publicKey: EMAILJS_KEY },
-          );
-          emailed = true;
-        } catch {
-          emailed = false;
-        }
+      try {
+        const adminToken = await auth.currentUser?.getIdToken();
+        const res = await fetch(`${BACKEND_URL}/send-invite`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idToken: adminToken,
+            uid: auth.currentUser?.uid,
+            to_email: cleanEmail,
+            to_name: displayName.trim() || cleanEmail,
+            password,
+            role,
+            org_name: orgs.find((o) => o.id === orgId)?.name ?? "",
+            login_url: window.location.origin + "/login",
+          }),
+        });
+        emailed = res.ok;
+      } catch {
+        emailed = false;
       }
 
       setCreds({ email: cleanEmail, password, emailed });
@@ -123,16 +119,6 @@ export default function InvitationsPage() {
       <p className="muted" style={{ marginTop: 6, marginBottom: 26 }}>
         Create a tester account — a password is generated and sent to them by email.
       </p>
-
-      {!emailConfigured && (
-        <div className="card" style={{ marginBottom: 20, background: "var(--primary-soft)", border: "1px solid #f5c8d2" }}>
-          <strong style={{ fontSize: 14 }}>EmailJS not configured yet.</strong>
-          <span className="muted" style={{ fontSize: 14 }}>
-            {" "}Accounts are still created — the generated credentials will be shown to you to send manually.
-            Add <code>NEXT_PUBLIC_EMAILJS_SERVICE_ID / _TEMPLATE_ID / _PUBLIC_KEY</code> to <code>.env.local</code> to enable automatic emails.
-          </span>
-        </div>
-      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 20, alignItems: "start" }}>
         <form onSubmit={invite} className="card">

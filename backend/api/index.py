@@ -17,7 +17,10 @@ import hashlib
 import io
 import json
 import os
+import smtplib
 import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +30,7 @@ import onnxruntime as ort
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from PIL import Image
 
 CLASS_NAMES = ["good", "poor"]
@@ -61,6 +65,11 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "peprahobedadjei/icoms-milk-platform")
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "icoms-v2")
 WORKFLOW_FILE = os.environ.get("CONVERT_WORKFLOW", "convert-models.yml")
+
+# Email (Gmail SMTP via an App Password) — set as backend env vars on Vercel.
+GMAIL_USER = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
+GMAIL_FROM_NAME = os.environ.get("GMAIL_FROM_NAME", "ICOMS")
 
 app = FastAPI(title="Milk Powder Classification — Inference")
 
@@ -446,3 +455,148 @@ async def delete_model(payload: dict):
         "asset_deleted": removed_asset,
         "manifest_updated": removed_from_manifest,
     }
+
+
+# ----------------------------------------------------------------- invite email
+
+def _invite_email_html(name: str, email: str, password: str, org: str,
+                       role: str, login_url: str) -> str:
+    role_label = "Administrator" if role == "admin" else "Tester"
+    org_row = (
+        f'<tr><td style="padding:4px 0;color:#8a6b7d;">Organisation</td>'
+        f'<td style="padding:4px 0;font-weight:600;text-align:right;">{org}</td></tr>'
+        if org else ""
+    )
+    return f"""\
+<!doctype html>
+<html><body style="margin:0;background:#faf7f8;font-family:'Segoe UI',Arial,sans-serif;color:#370627;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf7f8;padding:28px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0"
+             style="max-width:560px;width:100%;background:#ffffff;border:1px solid #f0e4e9;border-radius:16px;overflow:hidden;">
+        <tr><td style="background:#cd0e34;padding:22px 32px;">
+          <span style="color:#fff;font-size:20px;font-weight:800;letter-spacing:.5px;">ICOMS</span>
+          <div style="color:#ffd9e1;font-size:13px;margin-top:2px;">Powder Milk Quality Assessment</div>
+        </td></tr>
+
+        <tr><td style="padding:30px 32px 8px;">
+          <h1 style="margin:0 0 6px;font-size:21px;">Hi {name},</h1>
+          <p style="margin:0;color:#6b5563;font-size:15px;line-height:1.6;">
+            You've been invited to the ICOMS platform as a <strong>{role_label}</strong>.
+            Use the credentials below to sign in.
+          </p>
+        </td></tr>
+
+        <tr><td style="padding:18px 32px 6px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                 style="background:#faf7f8;border:1px solid #f0e4e9;border-radius:12px;padding:16px 18px;">
+            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Name</td>
+                <td style="padding:4px 0;font-weight:600;text-align:right;font-size:14px;">{name}</td></tr>
+            {org_row}
+            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Role</td>
+                <td style="padding:4px 0;font-weight:600;text-align:right;font-size:14px;">{role_label}</td></tr>
+            <tr><td style="padding:10px 0 4px;color:#8a6b7d;font-size:14px;">Email</td>
+                <td style="padding:10px 0 4px;font-weight:600;text-align:right;font-size:14px;">{email}</td></tr>
+            <tr><td style="padding:4px 0;color:#8a6b7d;font-size:14px;">Password</td>
+                <td style="padding:4px 0;text-align:right;">
+                  <code style="background:#fdeef1;color:#cd0e34;font-weight:700;padding:4px 10px;border-radius:6px;font-size:14px;">{password}</code>
+                </td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td align="center" style="padding:22px 32px 6px;">
+          <a href="{login_url}" style="display:inline-block;background:#cd0e34;color:#fff;text-decoration:none;
+             font-weight:700;font-size:15px;padding:13px 34px;border-radius:10px;">Open ICOMS &amp; sign in</a>
+          <div style="margin-top:10px;font-size:12px;color:#8a6b7d;">or paste this link: {login_url}</div>
+        </td></tr>
+
+        <tr><td style="padding:22px 32px 6px;">
+          <h2 style="margin:0 0 10px;font-size:16px;">How to run an assessment</h2>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
+              <strong style="color:#cd0e34;">1.</strong>&nbsp; Sign in with the credentials above.</td></tr>
+            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
+              <strong style="color:#cd0e34;">2.</strong>&nbsp; Choose a model from the list.</td></tr>
+            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
+              <strong style="color:#cd0e34;">3.</strong>&nbsp; Upload a microscopy image (<code>.tif</code>, <code>.jpg</code> or <code>.png</code>).</td></tr>
+            <tr><td style="padding:6px 0;font-size:14px;line-height:1.5;">
+              <strong style="color:#cd0e34;">4.</strong>&nbsp; Read the result — a <strong>good / poor</strong> assessment with confidence,
+              plus a Grad-CAM heat-map showing which regions the model focused on.</td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:20px 32px 30px;border-top:1px solid #f0e4e9;margin-top:10px;">
+          <p style="margin:0;font-size:12.5px;color:#8a6b7d;line-height:1.6;">
+            Keep these credentials private. If you didn't expect this invitation, you can ignore this email.
+            Need help? Reply to this message and your administrator will assist.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
+def _invite_email_text(name: str, email: str, password: str, org: str,
+                       role: str, login_url: str) -> str:
+    role_label = "Administrator" if role == "admin" else "Tester"
+    org_line = f"Organisation: {org}\n" if org else ""
+    return (
+        f"Hi {name},\n\n"
+        f"You've been invited to the ICOMS Powder Milk Quality Assessment platform "
+        f"as a {role_label}.\n\n"
+        f"Sign in here: {login_url}\n\n"
+        f"Your credentials\n"
+        f"----------------\n"
+        f"Name: {name}\n"
+        f"{org_line}"
+        f"Role: {role_label}\n"
+        f"Email: {email}\n"
+        f"Password: {password}\n\n"
+        f"How to run an assessment\n"
+        f"1. Sign in with the credentials above.\n"
+        f"2. Choose a model from the list.\n"
+        f"3. Upload a microscopy image (.tif, .jpg or .png).\n"
+        f"4. Read the good/poor result with confidence and a Grad-CAM heat-map.\n\n"
+        f"Keep these credentials private.\n"
+    )
+
+
+@app.post("/send-invite")
+async def send_invite(payload: dict):
+    id_token = payload.get("idToken")
+    uid = payload.get("uid")
+    to_email = (payload.get("to_email") or "").strip()
+    to_name = (payload.get("to_name") or "").strip() or to_email
+    org_name = (payload.get("org_name") or "").strip()
+    role = payload.get("role") or "user"
+    password = payload.get("password") or ""
+    login_url = (payload.get("login_url") or "").strip()
+
+    if not (to_email and password and login_url):
+        raise HTTPException(400, "to_email, password and login_url are required")
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        raise HTTPException(500, "Email is not configured (missing GMAIL_USER / GMAIL_APP_PASSWORD)")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        await _require_admin(id_token, uid, client)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Your ICOMS access — Powder Milk Quality Assessment"
+    msg["From"] = f"{GMAIL_FROM_NAME} <{GMAIL_USER}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(_invite_email_text(to_name, to_email, password, org_name, role, login_url), "plain"))
+    msg.attach(MIMEText(_invite_email_html(to_name, to_email, password, org_name, role, login_url), "html"))
+
+    def _send():
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as s:
+            s.starttls()
+            s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            s.sendmail(GMAIL_USER, [to_email], msg.as_string())
+
+    try:
+        await run_in_threadpool(_send)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Could not send the email: {e}")
+
+    return {"status": "sent", "to": to_email}
