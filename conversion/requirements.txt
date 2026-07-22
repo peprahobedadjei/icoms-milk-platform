@@ -1,0 +1,8 @@
+# torch + torchvision are installed separately (CPU wheels) in the workflow.
+onnx>=1.16.0
+onnxruntime>=1.18.0
+onnxconverter-common>=1.14.0
+numpy>=1.26.0
+pillow>=10.0.0
+gdown>=5.2.0
+firebase-admin>=6.5.0

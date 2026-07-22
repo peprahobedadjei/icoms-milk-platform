@@ -1,0 +1,87 @@
+name: Convert models
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_link:
+        description: "Google Drive folder or file link containing .pth models"
+        required: true
+        type: string
+      force:
+        description: "Reconvert everything (ignore the manifest)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # create/update the 'models' release
+
+concurrency:
+  group: convert-models  # never let two conversion runs race
+  cancel-in-progress: false
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (CPU torch + conversion deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r conversion/requirements.txt
+
+      - name: Fetch existing manifest (if the release exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p conversion/_work
+          gh release download models -p manifest.json -D conversion/_work \
+            || echo "No existing 'models' release/manifest yet — starting fresh."
+
+      - name: Download .pth from Google Drive
+        run: python conversion/download_drive.py "${{ inputs.drive_link }}" conversion/_work/pth
+
+      - name: Convert to fp16 ONNX + fidelity gate
+        working-directory: conversion
+        run: |
+          python convert.py \
+            --pth-dir _work/pth \
+            --out-dir _work/onnx \
+            --manifest _work/manifest.json \
+            ${{ inputs.force && '--force' || '' }}
+
+      - name: Publish ONNX + manifest to the 'models' release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view models >/dev/null 2>&1 \
+            || gh release create models --title "ONNX models" --notes "fp16 ONNX models for the ICOMS platform (auto-published)."
+          shopt -s nullglob
+          files=(conversion/_work/onnx/*.onnx)
+          if [ ${#files[@]} -gt 0 ]; then
+            gh release upload models "${files[@]}" --clobber
+          fi
+          gh release upload models conversion/_work/manifest.json --clobber
+
+      - name: Sync model metadata to Firestore
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          python conversion/update_firestore.py \
+            --manifest conversion/_work/manifest.json \
+            --repo "${{ github.repository }}"
+
+      - name: Summary
+        run: |
+          echo "### Conversion complete" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat conversion/_work/manifest.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
